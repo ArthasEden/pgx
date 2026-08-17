@@ -99,3 +99,25 @@ if err := rows.Err(); err != nil {
 	return err
 }
 ```
+
+## PostgreSQL в Docker
+
+В production и при локальной разработке PostgreSQL часто запускают в Docker-контейнере.
+
+Основные элементы:
+
+- **Docker image** — образ PostgreSQL, например `postgres:18.1-bookworm`;
+- **container** — запущенный экземпляр образа;
+- **volume** — постоянное хранилище данных PostgreSQL;
+- **port mapping** — проброс порта контейнера на хост;
+- **environment variables** — настройки PostgreSQL при первом запуске.
+
+Пример:
+
+```bash
+docker run -d \
+  --name pgx-postgres \
+  -p 5432:5432 \
+  --env-file .env \
+  -v pgx-data:/var/lib/postgresql \
+  postgres:18.1-bookworm
