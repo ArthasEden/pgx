@@ -27,3 +27,41 @@
 ## Native API
 
 Native API — это непосредственное использование API `pgx` для работы с PostgreSQL без промежуточного слоя `database/sql`.
+
+## QueryRow
+
+`QueryRow` (Query — запрос, Row — строка) — метод для выполнения запроса, который должен вернуть одну строку.
+
+Результат запроса извлекается с помощью метода `Scan()`.
+
+```go
+var result int
+
+err := pool.QueryRow(ctx, "SELECT 1").Scan(&result)
+```
+
+## Exec
+
+`Exec` — метод для выполнения SQL-запросов, от которых мы не ожидаем получение строк в результате.
+
+Обычно используется для:
+
+- `INSERT`
+- `UPDATE`
+- `DELETE`
+- `CREATE`
+- других SQL-команд, не возвращающих строки.
+
+`Exec` возвращает `CommandTag` и ошибку.
+
+`CommandTag` содержит информацию о выполненной SQL-команде. С помощью метода `RowsAffected()` можно получить количество затронутых строк.
+
+```go
+// Обновляем пользователя
+tag, err = pool.Exec(ctx, queryUpdate)
+if err != nil {
+	fmt.Println("Can't update user:", err)
+	return
+}
+fmt.Println("Rows affected:", tag.RowsAffected())
+```
