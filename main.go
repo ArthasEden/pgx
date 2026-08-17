@@ -22,6 +22,13 @@ func main() {
 		fmt.Println("Can't ping connection:", err)
 		return
 	}
-
 	fmt.Println("Successfully connected to DB!")
+
+	var res int
+	if err := pool.QueryRow(ctx, "SELECT 1").Scan(&res); err != nil {
+		fmt.Println("Can't do query:", err)
+		return
+	}
+
+	fmt.Println("Query result:", res)
 }
