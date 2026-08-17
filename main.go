@@ -8,43 +8,29 @@ import (
 )
 
 var (
-	ctx     = context.Background()
-	strConn = "postgres://postgres:pass@localhost:5432/postgres"
-
 	queryCreateTable = `create table if not exists users(
     						id serial primary key,
     						name text not null
 						)`
 	queryInsert = `insert into users (id, name)
-					values(21, 'Arthas')`
+					values($1, $2)`
 	queryUpdate = `update users
-					set name = 'Sergey'
-					where id = 21`
+					set name = $1
+					where id = $2`
 )
 
 func main() {
+
+	ctx := context.Background()
+	strConn := "postgres://postgres:pass@localhost:5432/postgres"
+
 	// Создаём пул соедиенений
-	pool, err := pgxpool.New(ctx, strConn)
+	pool, err := CreatePool(ctx, strConn)
 	if err != nil {
-		fmt.Println("Can't connect:", err)
+		fmt.Println("Error", err)
 		return
 	}
 	defer pool.Close()
-
-	// Пингуем соединение
-	if err := pool.Ping(ctx); err != nil {
-		fmt.Println("Can't ping connection:", err)
-		return
-	}
-	fmt.Println("Successfully connected to DB!")
-
-	// Используем pool.QueryRow - метод, когда ожидаем от зароса ответ в виде строк
-	var res int
-	if err := pool.QueryRow(ctx, "SELECT 1").Scan(&res); err != nil {
-		fmt.Println("Can't do query:", err)
-		return
-	}
-	fmt.Println("Query result:", res)
 
 	// Создаём таблицу
 	_, err = pool.Exec(ctx, queryCreateTable)
@@ -54,18 +40,58 @@ func main() {
 	}
 
 	// Добавляем пользователя
-	tag, err := pool.Exec(ctx, queryInsert)
-	if err != nil {
+	if err := AddUser(ctx, pool, 123, "Arthas"); err != nil {
 		fmt.Println("Can't add user:", err)
-		return
 	}
-	fmt.Println("Rows affected:", tag.RowsAffected())
 
 	// Обновляем пользователя
-	tag, err = pool.Exec(ctx, queryUpdate)
-	if err != nil {
+	if err := UpdateUser(ctx, pool, 123, "Sergey"); err != nil {
 		fmt.Println("Can't update user:", err)
-		return
+	}
+}
+
+func CreatePool(
+	ctx context.Context,
+	strConn string,
+) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.New(ctx, strConn)
+	if err != nil {
+		return nil, fmt.Errorf("Can't connect: %w", err)
+	}
+
+	// Пингуем соединение
+	if err := pool.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("Can't ping connection: %w", err)
+
+	}
+	fmt.Println("Successfully connected to DB!")
+	return pool, err
+}
+
+func AddUser(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	id int,
+	name string,
+) error {
+	tag, err := pool.Exec(ctx, queryInsert, id, name)
+	if err != nil {
+		return err
 	}
 	fmt.Println("Rows affected:", tag.RowsAffected())
+	return nil
+}
+
+func UpdateUser(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	id int,
+	name string,
+) error {
+	tag, err := pool.Exec(ctx, queryUpdate, name, id)
+	if err != nil {
+		return err
+	}
+	fmt.Println("Rows affected:", tag.RowsAffected())
+	return nil
 }
