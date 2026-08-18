@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"pgxPractice/internal/service"
+	"time"
 )
 
 func (a *api) Create(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
 	dtoReq := DTOreq{}
 
 	if err := json.NewDecoder(r.Body).Decode(&dtoReq); err != nil {
@@ -20,8 +25,8 @@ func (a *api) Create(w http.ResponseWriter, r *http.Request) {
 		PhoneNumber: dtoReq.PhoneNumber,
 	}
 
-	if err := a.service.Create(r.Context(), in); err != nil {
-		http.Error(w, "can't create user", http.StatusInternalServerError)
+	if err := a.service.Create(ctx, in); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 

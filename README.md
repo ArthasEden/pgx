@@ -160,3 +160,46 @@ if err := server.Shutdown(shutdownCtx); err != nil {
 ```
 
 Идея: создаём отдельный context с timeout и через него управляем временем graceful shutdown.
+
+## Context в PGX
+
+pgx принимает context.Context в методах Exec, Query и QueryRow и самостоятельно реагирует на его отмену.
+
+В нашем API мы создаём context с timeout:
+
+```go
+ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+defer cancel()
+```
+
+Затем передаём его в service:
+```go
+a.service.Create(ctx, in)
+```
+
+Service просто передаёт тот же context в repository:
+```go
+s.repo.Create(ctx, user)
+```
+
+А repository передаёт его непосредственно в pgx:
+```go
+_, err := r.pool.Exec(ctx, query)
+```
+
+Например, для проверки мы использовали:
+```go
+func (r *repo) Slow(ctx context.Context) error {
+    _, err := r.pool.Exec(ctx, `SELECT pg_sleep(5)`)
+    return err
+}
+```
+
+Здесь PostgreSQL специально ждёт 5 секунд, а наш context разрешает выполнение только 3 секунды. Поэтому через 3 секунды context отменяется, pgx обнаруживает это и Exec возвращает:
+```go
+context deadline exceeded
+```
+
+Таким образом, вокруг Exec, Query или QueryRow не нужно самостоятельно проверять ctx.Done(). Достаточно передать context в pgx.
+
+ctx.Done() нужен в том случае, когда мы сами пишем длительную операцию, которая должна уметь реагировать на отмену context.

@@ -13,4 +13,5 @@ func (s *service) Create(ctx context.Context, in UserInput) error {
 	}
 
 	return nil
+
 }
