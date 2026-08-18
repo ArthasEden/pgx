@@ -1,0 +1,27 @@
+[
+  {
+    "Name": "Bob",
+    "Age": 25,
+    "PhoneNumber": "+77001234567"
+  },
+  {
+    "Name": "Alice",
+    "Age": 30,
+    "PhoneNumber": "+77007654321"
+  },
+  {
+    "Name": "John",
+    "Age": 22,
+    "PhoneNumber": null
+  },
+  {
+    "Name": "Emma",
+    "Age": 28,
+    "PhoneNumber": "+77005554433"
+  },
+  {
+    "Name": "Michael",
+    "Age": 35,
+    "PhoneNumber": "+77001112233"
+  }
+]

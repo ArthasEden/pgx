@@ -4,9 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"os/signal"
+	"pgxPractice/internal/api"
 	"pgxPractice/internal/repo"
+	"pgxPractice/internal/service"
+	"syscall"
+	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -31,65 +36,34 @@ func main() {
 	}
 	defer pool.Close()
 
-	// Создаём репозиторий
 	repo := repo.NewRepo(pool)
+	svc := service.NewService(repo)
+	api := api.NewAPI(svc)
 
-	// Создаём пользователя Joe
-	if err := repo.Create(ctx, 4, "Joe"); err != nil {
-		fmt.Println("Create user:", err)
-		return
+	server := http.Server{
+		Addr:    "localhost:8080",
+		Handler: api.NewHandler(),
 	}
-	fmt.Println()
 
-	// Получаем пользователя
-	if err := repo.GetUser(ctx, 4); err != nil {
-		fmt.Println("Get user:", err)
-		return
-	}
-	fmt.Println()
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
-	// Обновляем пользователя: меняем имя на Mike
-	if err := repo.Update(ctx, 4, "Mike"); err != nil {
-		fmt.Println("Update user:", err)
-		return
-	}
-	fmt.Println()
-
-	// Получаем пользователя: ожидаем обновленное имя
-	if err := repo.GetUser(ctx, 4); err != nil {
-		fmt.Println("Get user:", err)
-		return
-	}
-	fmt.Println()
-
-	// Получаем всех пользователей: ожидаем четверых
-	if err := repo.Get(ctx); err != nil {
-		fmt.Println("Get users:", err)
-		return
-	}
-	fmt.Println()
-
-	// Удаляем пользователя
-	if err := repo.Delete(ctx, 4); err != nil {
-		fmt.Println("Delete user:", err)
-		return
-	}
-	fmt.Println()
-
-	// Получаем пользователя: ожидаем ошибку
-	if err := repo.GetUser(ctx, 4); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			fmt.Println("Get user:", errUserNotFound)
-		} else {
-			fmt.Println("Get user:", err)
-			return
+	fmt.Println("Starting HTTP-Server")
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Println("Can't starting server", err)
+			cancel()
 		}
-	}
-	fmt.Println()
+	}()
 
-	// Получаем всех пользователей: ожидаем троих
-	if err := repo.Get(ctx); err != nil {
-		fmt.Println("Get users:", err)
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	fmt.Println("Stopping HTTP-Server...")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		fmt.Println("Can't shutdown server", err)
 		return
 	}
 }

@@ -2,34 +2,44 @@ package repo
 
 import (
 	"context"
-	"fmt"
+	"pgxPractice/internal/service"
 )
 
 func (r *repo) Get(
 	ctx context.Context,
-) error {
-	var (
-		id   int
-		name string
-		q    = `select id, name from users`
-	)
+) ([]service.User, error) {
+	users := make([]service.User, 0)
 
-	rows, err := r.pool.Query(ctx, q)
+	rows, err := r.pool.Query(ctx,
+		`select 
+		id, 
+		name, 
+		age,
+		phone_number,
+		is_active,
+		created_at from users`)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		if err := rows.Scan(&id, &name); err != nil {
-			return err
+		u := service.User{}
+		if err := rows.Scan(
+			&u.ID,
+			&u.Name,
+			&u.Age,
+			&u.PhoneNumber,
+			&u.IsActive,
+			&u.CreatedAt); err != nil {
+			return nil, err
 		}
-		fmt.Printf("Get user: %d = %s\n", id, name)
+		users = append(users, u)
 	}
 
 	if err := rows.Err(); err != nil {
-		return err
+		return nil, err
 	}
 
-	return nil
+	return users, nil
 }

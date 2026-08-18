@@ -1,0 +1,521 @@
+===== ./cmd/main.go =====
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"os/signal"
+	"pgxPractice/internal/api"
+	"pgxPractice/internal/repo"
+	"pgxPractice/internal/service"
+	"syscall"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+var errUserNotFound = "user not found"
+
+func main() {
+	ctx := context.Background()
+	strConn := "postgres://postgres:pass@localhost:5432/postgres"
+
+	// Создаём пул соедиенений
+	pool, err := pgxpool.New(ctx, strConn)
+	if err != nil {
+		fmt.Println("Can't connect:", err)
+		return
+	}
+
+	// Пингуем соединение
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		fmt.Println("Can't ping connection:", err)
+		return
+	}
+	defer pool.Close()
+
+	repo := repo.NewRepo(pool)
+	svc := service.NewService(repo)
+	api := api.NewAPI(svc)
+
+	server := http.Server{
+		Addr:    "localhost:8080",
+		Handler: api.NewHandler(),
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	fmt.Println("Starting HTTP-Server")
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			fmt.Println("Can't starting server", err)
+			cancel()
+		}
+	}()
+
+	<-ctx.Done()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	fmt.Println("Stopping HTTP-Server...")
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		fmt.Println("Can't shutdown server", err)
+		return
+	}
+}
+
+
+===== ./migrations/000001_users.down.sql =====
+DROP TABLE users;
+
+===== ./migrations/000001_users.up.sql =====
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    age INTEGER NOT NULL,
+    phone_number VARCHAR(20),
+    is_active BOOLEAN,
+    created_at TIMESTAMPTZ
+);
+
+===== ./internal/service/get.go =====
+package service
+
+import (
+	"context"
+	"fmt"
+)
+
+func (s *service) Get(ctx context.Context) ([]User, error) {
+	users, err := s.repo.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("Get user %w", err)
+	}
+	return users, nil
+
+}
+
+
+===== ./internal/service/create.go =====
+package service
+
+import (
+	"context"
+	"fmt"
+)
+
+func (s *service) Create(ctx context.Context, in UserInput) error {
+	user := NewUser(in)
+
+	if err := s.repo.Create(ctx, user); err != nil {
+		return fmt.Errorf("Create user %w", err)
+	}
+
+	return nil
+}
+
+
+===== ./internal/service/delete.go =====
+package service
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/google/uuid"
+)
+
+func (s *service) Delete(
+	ctx context.Context,
+	id uuid.UUID,
+) error {
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("Delete user %w", err)
+	}
+
+	return nil
+}
+
+
+===== ./internal/service/service.go =====
+package service
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+)
+
+type Repo interface {
+	Create(ctx context.Context, u User) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	Get(ctx context.Context) ([]User, error)
+}
+
+type service struct {
+	repo Repo
+}
+
+func NewService(repo Repo) *service {
+	return &service{
+		repo: repo,
+	}
+}
+
+
+===== ./internal/service/user.go =====
+package service
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
+
+type User struct {
+	ID          uuid.UUID
+	Name        string
+	Age         int
+	PhoneNumber *string
+	IsActive    bool
+	CreatedAt   *time.Time
+}
+
+func NewUser(in UserInput) User {
+	timeNow := time.Now()
+
+	return User{
+		ID:          uuid.New(),
+		Name:        in.Name,
+		Age:         in.Age,
+		PhoneNumber: in.PhoneNumber,
+		IsActive:    true,
+		CreatedAt:   &timeNow,
+	}
+}
+
+type UserInput struct {
+	Name        string
+	Age         int
+	PhoneNumber *string
+}
+
+
+===== ./internal/repo/repo.go =====
+package repo
+
+import "github.com/jackc/pgx/v5/pgxpool"
+
+type repo struct {
+	pool *pgxpool.Pool
+}
+
+func NewRepo(pool *pgxpool.Pool) *repo {
+	return &repo{
+		pool: pool,
+	}
+}
+
+
+===== ./internal/repo/get.go =====
+package repo
+
+import (
+	"context"
+	"pgxPractice/internal/service"
+)
+
+func (r *repo) Get(
+	ctx context.Context,
+) ([]service.User, error) {
+	users := make([]service.User, 0)
+
+	rows, err := r.pool.Query(ctx,
+		`select 
+		id, 
+		name, 
+		age,
+		phone_number,
+		is_active,
+		created_at from users`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		u := service.User{}
+		if err := rows.Scan(
+			&u.ID,
+			&u.Name,
+			&u.Age,
+			&u.PhoneNumber,
+			&u.IsActive,
+			&u.CreatedAt); err != nil {
+			return nil, err
+		}
+		users = append(users, u)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return users, nil
+}
+
+
+===== ./internal/repo/create.go =====
+package repo
+
+import (
+	"context"
+	"pgxPractice/internal/service"
+)
+
+func (r *repo) Create(
+	ctx context.Context,
+	u service.User,
+) error {
+	query := `
+	insert into users (
+	id,
+	name,
+	age,
+	phone_number,
+	is_active,
+	created_at
+	)
+	values($1, $2, $3, $4, $5, $6)`
+
+	_, err := r.pool.Exec(
+		ctx, query,
+		u.ID,
+		u.Name,
+		u.Age,
+		u.PhoneNumber,
+		u.IsActive,
+		u.CreatedAt,
+	)
+
+	return err
+}
+
+
+===== ./internal/repo/delete.go =====
+package repo
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5"
+)
+
+func (r *repo) Delete(
+	ctx context.Context,
+	id uuid.UUID,
+) error {
+	query := `delete from users where id = $1`
+
+	tag, err := r.pool.Exec(ctx, query, id)
+	if err != nil {
+		return err
+	}
+
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	return nil
+}
+
+
+===== ./internal/api/get.go =====
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+)
+
+func (a *api) Get(w http.ResponseWriter, r *http.Request) {
+	users, err := a.service.Get(r.Context())
+	if err != nil {
+		http.Error(w, "can't get users", http.StatusInternalServerError)
+		return
+	}
+
+	dtoResp := DTOServiceToApi(users)
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if err := json.NewEncoder(w).Encode(dtoResp); err != nil {
+		return
+	}
+}
+
+
+===== ./internal/api/dto.go =====
+package api
+
+import (
+	"pgxPractice/internal/service"
+
+	"github.com/google/uuid"
+)
+
+type DTOreq struct {
+	Name        string
+	Age         int
+	PhoneNumber *string
+}
+
+type DTOresp struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Age         int       `json:"age"`
+	PhoneNumber *string   `json:"phone_number"`
+}
+
+func DTOServiceToApi(users []service.User) []DTOresp {
+	dtoUsers := make([]DTOresp, 0)
+
+	for _, u := range users {
+		dtoUser := DTOresp{
+			ID:          u.ID,
+			Name:        u.Name,
+			Age:         u.Age,
+			PhoneNumber: u.PhoneNumber,
+		}
+		dtoUsers = append(dtoUsers, dtoUser)
+	}
+
+	return dtoUsers
+}
+
+
+===== ./internal/api/api.go =====
+package api
+
+import (
+	"context"
+	"pgxPractice/internal/service"
+
+	"github.com/google/uuid"
+)
+
+type Service interface {
+	Create(ctx context.Context, in service.UserInput) error
+	Delete(ctx context.Context, id uuid.UUID) error
+	Get(ctx context.Context) ([]service.User, error)
+}
+
+type api struct {
+	service Service
+}
+
+func NewAPI(service Service) *api {
+	return &api{
+		service: service,
+	}
+}
+
+
+===== ./internal/api/create.go =====
+package api
+
+import (
+	"encoding/json"
+	"net/http"
+	"pgxPractice/internal/service"
+)
+
+func (a *api) Create(w http.ResponseWriter, r *http.Request) {
+	dtoReq := DTOreq{}
+
+	if err := json.NewDecoder(r.Body).Decode(&dtoReq); err != nil {
+		http.Error(w, "can't decode data", http.StatusBadRequest)
+		return
+	}
+
+	in := service.UserInput{
+		Name:        dtoReq.Name,
+		Age:         dtoReq.Age,
+		PhoneNumber: dtoReq.PhoneNumber,
+	}
+
+	if err := a.service.Create(r.Context(), in); err != nil {
+		http.Error(w, "can't create user", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+
+===== ./internal/api/handler.go =====
+package api
+
+import "net/http"
+
+func (a *api) NewHandler() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /create", a.Create)
+	mux.HandleFunc("DELETE /delete/{id}", a.Delete)
+	mux.HandleFunc("GET /get", a.Get)
+
+	return mux
+}
+
+
+===== ./internal/api/delete.go =====
+package api
+
+import (
+	"net/http"
+
+	"github.com/google/uuid"
+)
+
+func (a *api) Delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	uuID, err := uuid.Parse(id)
+	if err != nil {
+		http.Error(w, "can't parse id", http.StatusInternalServerError)
+		return
+	}
+
+	if err := a.service.Delete(r.Context(), uuID); err != nil {
+		http.Error(w, "can't delete user", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+
+===== ./Makefile =====
+DB_URL=postgres://postgres:pass@localhost:5432/postgres
+
+MIGRATIONS_PATH=./migrations
+
+run:
+	@go run cmd/main.go
+
+migrate-create:
+	@migrate create -ext sql -dir $(MIGRATIONS_PATH) -seq $(name)
+
+migrate-up:
+	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" up
+
+migrate-down:
+	@migrate -path $(MIGRATIONS_PATH) -database "$(DB_URL)" down
+

@@ -121,3 +121,42 @@ docker run -d \
   --env-file .env \
   -v pgx-data:/var/lib/postgresql \
   postgres:18.1-bookworm
+```
+
+## Graceful Shutdown
+
+Graceful Shutdown — корректное завершение приложения: мы получаем сигнал о завершении, перестаём принимать новые запросы, даём текущим операциям завершиться и после этого закрываем ресурсы.
+
+1. Ждём сигнал завершения
+```go
+ctx, cancel := signal.NotifyContext(
+    context.Background(),
+    syscall.SIGINT,
+    syscall.SIGTERM,
+)
+defer cancel()
+
+go func() {
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		fmt.Println("Can't starting server", err)
+		cancel()
+	}
+}()
+
+<-ctx.Done()
+```
+
+Идея: SIGINT / SIGTERM → context отменяется → ctx.Done() разблокируется → понимаем, что пора завершаться.
+
+2. Выполняем Shutdown
+```go
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+
+if err := server.Shutdown(shutdownCtx); err != nil {
+	fmt.Println("Can't shutdown server", err)
+	return
+}
+```
+
+Идея: создаём отдельный context с timeout и через него управляем временем graceful shutdown.

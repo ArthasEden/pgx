@@ -2,22 +2,42 @@ package repo
 
 import (
 	"context"
-	"fmt"
+	"pgxPractice/internal/service"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func (r *repo) Create(
 	ctx context.Context,
-	id int,
-	name string,
+	u service.User,
 ) error {
-	var q = `insert into users (id, name)
-				values($1, $2)`
+	query := `
+	insert into users (
+	id,
+	name,
+	age,
+	phone_number,
+	is_active,
+	created_at
+	)
+	values($1, $2, $3, $4, $5, $6)`
 
-	_, err := r.pool.Exec(ctx, q, id, name)
+	tag, err := r.pool.Exec(
+		ctx, query,
+		u.ID,
+		u.Name,
+		u.Age,
+		u.PhoneNumber,
+		u.IsActive,
+		u.CreatedAt,
+	)
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Create user: %d = %s\n", id, name)
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
 	return nil
 }

@@ -2,18 +2,19 @@ package repo
 
 import (
 	"context"
-	"fmt"
+
+	"github.com/google/uuid"
 
 	"github.com/jackc/pgx/v5"
 )
 
 func (r *repo) Delete(
 	ctx context.Context,
-	id int,
+	id uuid.UUID,
 ) error {
-	var q = `delete from users where id = $1`
+	query := `delete from users where id = $1`
 
-	tag, err := r.pool.Exec(ctx, q, id)
+	tag, err := r.pool.Exec(ctx, query, id)
 	if err != nil {
 		return err
 	}
@@ -22,6 +23,5 @@ func (r *repo) Delete(
 		return pgx.ErrNoRows
 	}
 
-	fmt.Printf("Delete user: %d \n", id)
 	return nil
 }
