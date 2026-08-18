@@ -8,9 +8,10 @@ import (
 )
 
 type Service interface {
-	Create(ctx context.Context, in service.UserInput) error
-	Delete(ctx context.Context, id uuid.UUID) error
+	Create(ctx context.Context, input service.UserInput) error
+	Delete(ctx context.Context, uuid uuid.UUID) error
 	Get(ctx context.Context) ([]service.User, error)
+	UpdateBalance(ctx context.Context, uuid uuid.UUID, amount int) error
 }
 
 type api struct {
