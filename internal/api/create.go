@@ -19,7 +19,7 @@ func (a *api) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	in := service.UserInput{
+	in := service.InputUser{
 		Name:        dtoReq.Name,
 		Age:         dtoReq.Age,
 		PhoneNumber: dtoReq.PhoneNumber,

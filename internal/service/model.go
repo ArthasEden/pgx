@@ -11,11 +11,12 @@ type User struct {
 	Name        string
 	Age         int
 	PhoneNumber *string
+	Balance     int
 	IsActive    bool
 	CreatedAt   *time.Time
 }
 
-func NewUser(in UserInput) User {
+func NewUser(in InputUser) User {
 	timeNow := time.Now()
 
 	return User{
@@ -23,13 +24,21 @@ func NewUser(in UserInput) User {
 		Name:        in.Name,
 		Age:         in.Age,
 		PhoneNumber: in.PhoneNumber,
+		Balance:     in.Balance,
 		IsActive:    true,
 		CreatedAt:   &timeNow,
 	}
 }
 
-type UserInput struct {
+type InputUser struct {
 	Name        string
 	Age         int
 	PhoneNumber *string
+	Balance     int
+}
+
+type InputTransfer struct {
+	From   uuid.UUID
+	To     uuid.UUID
+	Amount int
 }

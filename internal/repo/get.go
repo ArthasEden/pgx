@@ -17,7 +17,8 @@ func (r *repo) Get(
 		age,
 		phone_number,
 		is_active,
-		created_at from users`)
+		created_at,
+		balance from users`)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +32,8 @@ func (r *repo) Get(
 			&u.Age,
 			&u.PhoneNumber,
 			&u.IsActive,
-			&u.CreatedAt); err != nil {
+			&u.CreatedAt,
+			&u.Balance); err != nil {
 			return nil, err
 		}
 		users = append(users, u)

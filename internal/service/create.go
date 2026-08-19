@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-func (s *service) Create(ctx context.Context, in UserInput) error {
+func (s *service) Create(ctx context.Context, in InputUser) error {
 	user := NewUser(in)
 
 	if err := s.repo.Create(ctx, user); err != nil {
