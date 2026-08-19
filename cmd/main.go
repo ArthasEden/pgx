@@ -15,14 +15,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var errUserNotFound = "user not found"
-
 func main() {
 	ctx := context.Background()
 	strConn := "postgres://postgres:pass@localhost:5432/postgres"
 
+	config, err := pgxpool.ParseConfig(strConn)
+	if err != nil {
+		fmt.Println("can't parse config", err)
+		return
+	}
+
+	config.MaxConns = 10                      //ограничивает пул максимум десятью соединениями.
+	config.MinConns = 2                       //говорит пулу поддерживать минимум два соединения.
+	config.MaxConnLifetime = 30 * time.Minute //ограничивает время жизни отдельного соединения.
+	config.MaxConnIdleTime = 5 * time.Minute  //ограничивает время, которое connection может простаивать.
+
 	// Создаём пул соедиенений
-	pool, err := pgxpool.New(ctx, strConn)
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		fmt.Println("Can't connect:", err)
 		return
@@ -35,6 +44,20 @@ func main() {
 		return
 	}
 	defer pool.Close()
+
+	go func() {
+		for {
+			stat := pool.Stat()
+
+			fmt.Println(
+				"Total:", stat.TotalConns(),
+				"Acquired:", stat.AcquiredConns(),
+				"Idle:", stat.IdleConns(),
+			)
+
+			time.Sleep(1 * time.Second)
+		}
+	}()
 
 	repo := repo.NewRepo(pool)
 	svc := service.NewService(repo)

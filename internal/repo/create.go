@@ -11,6 +11,10 @@ func (r *repo) Create(
 	ctx context.Context,
 	u service.User,
 ) error {
+	if err := r.Slow(ctx); err != nil {
+		return err
+	}
+
 	query := `
 	insert into users (
 	id,
