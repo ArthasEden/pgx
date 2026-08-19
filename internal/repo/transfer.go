@@ -13,7 +13,7 @@ func (r *repo) Transfer(
 	from uuid.UUID,
 	amount int,
 ) error {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return err
 	}
