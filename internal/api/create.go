@@ -26,7 +26,7 @@ func (a *api) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.service.Create(ctx, in); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), getHTTPStatus(err))
 		return
 	}
 

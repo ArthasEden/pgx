@@ -2,7 +2,11 @@ package repo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"pgxPractice/internal/service"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (r *repo) Get(
@@ -20,6 +24,12 @@ func (r *repo) Get(
 		created_at,
 		balance from users`)
 	if err != nil {
+		var pgxErr *pgconn.PgError
+
+		if errors.As(err, &pgxErr) {
+			fmt.Println(pgxErr.Code)
+		}
+
 		return nil, err
 	}
 	defer rows.Close()

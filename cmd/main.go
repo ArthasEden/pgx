@@ -25,10 +25,10 @@ func main() {
 		return
 	}
 
-	config.MaxConns = 10                      //ограничивает пул максимум десятью соединениями.
-	config.MinConns = 2                       //говорит пулу поддерживать минимум два соединения.
-	config.MaxConnLifetime = 30 * time.Minute //ограничивает время жизни отдельного соединения.
-	config.MaxConnIdleTime = 5 * time.Minute  //ограничивает время, которое connection может простаивать.
+	config.MaxConns = 10                      //максимальное количество соединений.
+	config.MinConns = 2                       //минимальное количество соединений.
+	config.MaxConnLifetime = 30 * time.Minute //время жизни используемого соединения.
+	config.MaxConnIdleTime = 5 * time.Minute  //время жизни неиспользуемого соединения.
 
 	// Создаём пул соедиенений
 	pool, err := pgxpool.NewWithConfig(ctx, config)

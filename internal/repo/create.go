@@ -2,19 +2,18 @@ package repo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"pgxPractice/internal/service"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (r *repo) Create(
 	ctx context.Context,
 	u service.User,
 ) error {
-	if err := r.Slow(ctx); err != nil {
-		return err
-	}
-
 	query := `
 	insert into users (
 	id,
@@ -36,6 +35,12 @@ func (r *repo) Create(
 		u.CreatedAt,
 	)
 	if err != nil {
+		var pgxErr *pgconn.PgError
+
+		if errors.As(err, &pgxErr) {
+			fmt.Println(pgxErr.Code)
+		}
+
 		return err
 	}
 

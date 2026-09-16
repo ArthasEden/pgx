@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 func (a *api) Delete(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
 	id := r.PathValue("id")
 	uuID, err := uuid.Parse(id)
 	if err != nil {
@@ -14,8 +19,8 @@ func (a *api) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.service.Delete(r.Context(), uuID); err != nil {
-		http.Error(w, "can't delete user", http.StatusInternalServerError)
+	if err := a.service.Delete(ctx, uuID); err != nil {
+		http.Error(w, "can't delete user", getHTTPStatus(err))
 		return
 	}
 

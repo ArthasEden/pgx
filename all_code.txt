@@ -16,14 +16,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var errUserNotFound = "user not found"
-
 func main() {
 	ctx := context.Background()
 	strConn := "postgres://postgres:pass@localhost:5432/postgres"
 
+	config, err := pgxpool.ParseConfig(strConn)
+	if err != nil {
+		fmt.Println("can't parse config", err)
+		return
+	}
+
+	config.MaxConns = 10                      //максимальное количество соединений.
+	config.MinConns = 2                       //минимальное количество соединений.
+	config.MaxConnLifetime = 30 * time.Minute //время жизни используемого соединения.
+	config.MaxConnIdleTime = 5 * time.Minute  //время жизни неиспользуемого соединения.
+
 	// Создаём пул соедиенений
-	pool, err := pgxpool.New(ctx, strConn)
+	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		fmt.Println("Can't connect:", err)
 		return
@@ -36,6 +45,20 @@ func main() {
 		return
 	}
 	defer pool.Close()
+
+	go func() {
+		for {
+			stat := pool.Stat()
+
+			fmt.Println(
+				"Total:", stat.TotalConns(),
+				"Acquired:", stat.AcquiredConns(),
+				"Idle:", stat.IdleConns(),
+			)
+
+			time.Sleep(1 * time.Second)
+		}
+	}()
 
 	repo := repo.NewRepo(pool)
 	svc := service.NewService(repo)
@@ -73,6 +96,14 @@ func main() {
 ===== ./migrations/000001_users.down.sql =====
 DROP TABLE users;
 
+===== ./migrations/000002_add_balance.up.sql =====
+ALTER TABLE users
+ADD COLUMN balance INT NOT NULL DEFAULT 0
+
+===== ./migrations/000002_add_balance.down.sql =====
+ALTER TABLE users
+DROP COLUMN balance
+
 ===== ./migrations/000001_users.up.sql =====
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY,
@@ -91,13 +122,14 @@ import (
 	"fmt"
 )
 
-func (s *service) Get(ctx context.Context) ([]User, error) {
+func (s *service) Get(
+	ctx context.Context,
+) ([]User, error) {
 	users, err := s.repo.Get(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("Get user %w", err)
 	}
 	return users, nil
-
 }
 
 
@@ -109,7 +141,10 @@ import (
 	"fmt"
 )
 
-func (s *service) Create(ctx context.Context, in UserInput) error {
+func (s *service) Create(
+	ctx context.Context,
+	in InputUser,
+) error {
 	user := NewUser(in)
 
 	if err := s.repo.Create(ctx, user); err != nil {
@@ -155,6 +190,7 @@ type Repo interface {
 	Create(ctx context.Context, u User) error
 	Delete(ctx context.Context, id uuid.UUID) error
 	Get(ctx context.Context) ([]User, error)
+	Transfer(ctx context.Context, to uuid.UUID, from uuid.UUID, amount int) error
 }
 
 type service struct {
@@ -168,7 +204,27 @@ func NewService(repo Repo) *service {
 }
 
 
-===== ./internal/service/user.go =====
+===== ./internal/service/transfer.go =====
+package service
+
+import (
+	"context"
+	"fmt"
+)
+
+func (s *service) Transfer(
+	ctx context.Context,
+	in InputTransfer,
+) error {
+	if err := s.repo.Transfer(ctx, in.To, in.From, in.Amount); err != nil {
+		return fmt.Errorf("update balance: %w", err)
+	}
+
+	return nil
+}
+
+
+===== ./internal/service/model.go =====
 package service
 
 import (
@@ -182,11 +238,12 @@ type User struct {
 	Name        string
 	Age         int
 	PhoneNumber *string
+	Balance     int
 	IsActive    bool
 	CreatedAt   *time.Time
 }
 
-func NewUser(in UserInput) User {
+func NewUser(in InputUser) User {
 	timeNow := time.Now()
 
 	return User{
@@ -194,15 +251,23 @@ func NewUser(in UserInput) User {
 		Name:        in.Name,
 		Age:         in.Age,
 		PhoneNumber: in.PhoneNumber,
+		Balance:     in.Balance,
 		IsActive:    true,
 		CreatedAt:   &timeNow,
 	}
 }
 
-type UserInput struct {
+type InputUser struct {
 	Name        string
 	Age         int
 	PhoneNumber *string
+	Balance     int
+}
+
+type InputTransfer struct {
+	From   uuid.UUID
+	To     uuid.UUID
+	Amount int
 }
 
 
@@ -227,7 +292,11 @@ package repo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"pgxPractice/internal/service"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (r *repo) Get(
@@ -242,8 +311,15 @@ func (r *repo) Get(
 		age,
 		phone_number,
 		is_active,
-		created_at from users`)
+		created_at,
+		balance from users`)
 	if err != nil {
+		var pgxErr *pgconn.PgError
+
+		if errors.As(err, &pgxErr) {
+			fmt.Println(pgxErr.Code)
+		}
+
 		return nil, err
 	}
 	defer rows.Close()
@@ -256,7 +332,8 @@ func (r *repo) Get(
 			&u.Age,
 			&u.PhoneNumber,
 			&u.IsActive,
-			&u.CreatedAt); err != nil {
+			&u.CreatedAt,
+			&u.Balance); err != nil {
 			return nil, err
 		}
 		users = append(users, u)
@@ -275,7 +352,12 @@ package repo
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"pgxPractice/internal/service"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (r *repo) Create(
@@ -293,7 +375,7 @@ func (r *repo) Create(
 	)
 	values($1, $2, $3, $4, $5, $6)`
 
-	_, err := r.pool.Exec(
+	tag, err := r.pool.Exec(
 		ctx, query,
 		u.ID,
 		u.Name,
@@ -302,30 +384,13 @@ func (r *repo) Create(
 		u.IsActive,
 		u.CreatedAt,
 	)
-
-	return err
-}
-
-
-===== ./internal/repo/delete.go =====
-package repo
-
-import (
-	"context"
-
-	"github.com/google/uuid"
-
-	"github.com/jackc/pgx/v5"
-)
-
-func (r *repo) Delete(
-	ctx context.Context,
-	id uuid.UUID,
-) error {
-	query := `delete from users where id = $1`
-
-	tag, err := r.pool.Exec(ctx, query, id)
 	if err != nil {
+		var pgxErr *pgconn.PgError
+
+		if errors.As(err, &pgxErr) {
+			fmt.Println(pgxErr.Code)
+		}
+
 		return err
 	}
 
@@ -337,18 +402,125 @@ func (r *repo) Delete(
 }
 
 
+===== ./internal/repo/delete.go =====
+package repo
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func (r *repo) Delete(
+	ctx context.Context,
+	id uuid.UUID,
+) error {
+	query := `delete from users where id = $1`
+
+	tag, err := r.pool.Exec(ctx, query, id)
+	if err != nil {
+		var pgxErr *pgconn.PgError
+
+		if errors.As(err, &pgxErr) {
+			fmt.Println(pgxErr.Code)
+		}
+
+		return err
+	}
+
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	return nil
+}
+
+
+===== ./internal/repo/slow.go =====
+package repo
+
+import "context"
+
+func (r *repo) Slow(ctx context.Context) error {
+	_, err := r.pool.Exec(ctx, `SELECT pg_sleep(5)`)
+	return err
+}
+
+
+===== ./internal/repo/transfer.go =====
+package repo
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+)
+
+func (r *repo) Transfer(
+	ctx context.Context,
+	to uuid.UUID,
+	from uuid.UUID,
+	amount int,
+) error {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	tag, err := tx.Exec(ctx,
+		"UPDATE users SET balance = balance + $1 WHERE id = $2",
+		amount, to)
+	if err != nil {
+		return err
+	}
+
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	tag, err = tx.Exec(ctx,
+		"UPDATE users SET balance = balance - $1 WHERE id = $2",
+		amount, from)
+	if err != nil {
+		return err
+	}
+
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
 ===== ./internal/api/get.go =====
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 func (a *api) Get(w http.ResponseWriter, r *http.Request) {
-	users, err := a.service.Get(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	users, err := a.service.Get(ctx)
 	if err != nil {
-		http.Error(w, "can't get users", http.StatusInternalServerError)
+		http.Error(w, "can't get users", getHTTPStatus(err))
 		return
 	}
 
@@ -375,6 +547,7 @@ type DTOreq struct {
 	Name        string
 	Age         int
 	PhoneNumber *string
+	Balance     int
 }
 
 type DTOresp struct {
@@ -382,6 +555,13 @@ type DTOresp struct {
 	Name        string    `json:"name"`
 	Age         int       `json:"age"`
 	PhoneNumber *string   `json:"phone_number"`
+	Balance     int
+}
+
+type DTOreqTransfer struct {
+	From   uuid.UUID
+	To     uuid.UUID
+	Amount int
 }
 
 func DTOServiceToApi(users []service.User) []DTOresp {
@@ -393,6 +573,7 @@ func DTOServiceToApi(users []service.User) []DTOresp {
 			Name:        u.Name,
 			Age:         u.Age,
 			PhoneNumber: u.PhoneNumber,
+			Balance:     u.Balance,
 		}
 		dtoUsers = append(dtoUsers, dtoUser)
 	}
@@ -412,9 +593,10 @@ import (
 )
 
 type Service interface {
-	Create(ctx context.Context, in service.UserInput) error
-	Delete(ctx context.Context, id uuid.UUID) error
+	Create(ctx context.Context, input service.InputUser) error
+	Delete(ctx context.Context, uuid uuid.UUID) error
 	Get(ctx context.Context) ([]service.User, error)
+	Transfer(ctx context.Context, in service.InputTransfer) error
 }
 
 type api struct {
@@ -432,12 +614,17 @@ func NewAPI(service Service) *api {
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"pgxPractice/internal/service"
+	"time"
 )
 
 func (a *api) Create(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
 	dtoReq := DTOreq{}
 
 	if err := json.NewDecoder(r.Body).Decode(&dtoReq); err != nil {
@@ -445,14 +632,14 @@ func (a *api) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	in := service.UserInput{
+	in := service.InputUser{
 		Name:        dtoReq.Name,
 		Age:         dtoReq.Age,
 		PhoneNumber: dtoReq.PhoneNumber,
 	}
 
-	if err := a.service.Create(r.Context(), in); err != nil {
-		http.Error(w, "can't create user", http.StatusInternalServerError)
+	if err := a.service.Create(ctx, in); err != nil {
+		http.Error(w, err.Error(), getHTTPStatus(err))
 		return
 	}
 
@@ -471,6 +658,7 @@ func (a *api) NewHandler() http.Handler {
 	mux.HandleFunc("POST /create", a.Create)
 	mux.HandleFunc("DELETE /delete/{id}", a.Delete)
 	mux.HandleFunc("GET /get", a.Get)
+	mux.HandleFunc("POST /transfer", a.Transfer)
 
 	return mux
 }
@@ -480,12 +668,17 @@ func (a *api) NewHandler() http.Handler {
 package api
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 func (a *api) Delete(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
 	id := r.PathValue("id")
 	uuID, err := uuid.Parse(id)
 	if err != nil {
@@ -493,12 +686,80 @@ func (a *api) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := a.service.Delete(r.Context(), uuID); err != nil {
-		http.Error(w, "can't delete user", http.StatusInternalServerError)
+	if err := a.service.Delete(ctx, uuID); err != nil {
+		http.Error(w, "can't delete user", getHTTPStatus(err))
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+
+===== ./internal/api/transfer.go =====
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"pgxPractice/internal/service"
+	"time"
+)
+
+func (a *api) Transfer(w http.ResponseWriter, r *http.Request) {
+	req := DTOreqTransfer{}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "can't parse request", http.StatusInternalServerError)
+		return
+	}
+
+	in := service.InputTransfer{
+		To:     req.To,
+		From:   req.From,
+		Amount: req.Amount,
+	}
+
+	if err := a.service.Transfer(ctx, in); err != nil {
+		http.Error(w, "can't update balance", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+
+===== ./internal/api/erorrs.go =====
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func getHTTPStatus(err error) int {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return http.StatusNotFound
+	}
+
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "23505":
+			return http.StatusConflict
+		case "23503":
+			return http.StatusConflict
+		case "23502", "23514":
+			return http.StatusBadRequest
+		}
+	}
+
+	return http.StatusInternalServerError
 }
 
 

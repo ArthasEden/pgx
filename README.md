@@ -359,5 +359,82 @@ r.pool.QueryRow(...)
 ```go
 tx, err := r.pool.Begin(ctx)
 ```
+# Connection pool
 
-`pgxpool` сам получает необходимое соединение для транзакции.
+## `pgxpool.Pool`
+
+Это пул соединений с PostgreSQL, который управляет несколькими connections и распределяет их между запросами.
+
+В нашем проекте:
+```go
+pool, err := pgxpool.New(ctx, strConn)
+```
+
+Обычно мы работаем непосредственно с пулом:
+```go
+r.pool.Exec(...)
+r.pool.Query(...)
+r.pool.QueryRow(...)
+```
+
+`pgxpool` сам берёт свободное соединение, выполняет операцию и возвращает его обратно в пул.
+
+## Настройка пула
+
+Для настройки используем `pgxpool.Config`:
+
+```go
+config, err := pgxpool.ParseConfig(strConn)
+if err != nil {
+	return err
+}
+
+config.MaxConns = 10
+config.MinConns = 2
+config.MaxConnLifetime = 30 * time.Minute
+config.MaxConnIdleTime = 5 * time.Minute
+
+pool, err := pgxpool.NewWithConfig(ctx, config)
+```
+`MaxConns` — максимальное количество connections в пуле.
+
+`MinConns` — минимальное количество connections, которое пул старается поддерживать.
+
+`MaxConnLifetime` — максимальное время жизни одного connection.
+
+`MaxConnIdleTime` — максимальное время, которое connection может простаивать.
+
+## Статистика пула
+
+Состояние пула можно посмотреть через:
+
+```go
+stat := pool.Stat()
+
+stat.TotalConns()
+stat.AcquiredConns()
+stat.IdleConns()
+```
+
+`TotalConns()` — общее количество созданных connections.
+
+`AcquiredConns()` — количество занятых connections.
+
+`IdleConns()` — количество свободных connections.
+
+Например:
+
+Total: 3
+Acquired: 1
+Idle: 2
+
+## RAM 
+
+Каждое connection — это отдельная сессия PostgreSQL, поэтому PostgreSQL должен хранить для неё определённое состояние:
+
+параметры сессии;
+состояние транзакции;
+различные структуры, связанные с запросами;
+служебные данные.
+
+Поэтому чем больше connections, тем больше потенциальное потребление памяти.
